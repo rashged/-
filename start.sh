@@ -1,3 +1,3 @@
 #!/bin/bash
-# Render sets $PORT automatically
-exec gunicorn --bind 0.0.0.0:$PORT property_manager_improved_app:app
+gunicorn -w 4 -b 0.0.0.0:$PORT property_manager_improved_app:app
+
