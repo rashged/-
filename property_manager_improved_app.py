@@ -2,12 +2,9 @@
 Property & Contracts Manager — Flask (Single file, polished UI)
 - Tailwind + daisyUI (CDN)
 - Auth (admin@example.com / admin123)
-- Dashboard + Properties CRUD
-- SQLite init runs once (no before_first_request)
-
-Run local:
-  pip install flask werkzeug gunicorn
-  python property_manager_improved_app.py
+- Dashboard + Properties CRUD (list, search/filter, add, edit, delete)
+- SQLite init runs once (no before_first_request, compatible with Flask ≥3.1)
+- Fix for template inheritance via jinja2.DictLoader
 """
 
 from __future__ import annotations
@@ -15,8 +12,12 @@ import os, sqlite3
 from datetime import datetime
 from functools import wraps
 from typing import Optional
-from flask import Flask, request, redirect, url_for, session, flash, render_template_string
+
+from flask import (
+    Flask, request, redirect, url_for, session, flash, render_template_string
+)
 from werkzeug.security import generate_password_hash, check_password_hash
+from jinja2 import DictLoader  # مهم لعلاج TemplateNotFound عند استخدام extends
 
 APP_NAME = "Property & Contracts Manager"
 DB_PATH = os.path.join(os.path.dirname(__file__), "property_manager.db")
@@ -85,6 +86,11 @@ BASE_HTML = """
 </body>
 </html>
 """
+
+# سجّل base.html في مُحمّل القوالب حتى تعمل {% extends 'base.html' %}
+app.jinja_loader = DictLoader({
+    "base.html": BASE_HTML
+})
 
 HOME_HTML = """
 {% extends 'base.html' %}
@@ -230,6 +236,7 @@ def init_db():
         )
     """)
     conn.commit()
+    # seed admin
     if c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
         c.execute(
             "INSERT INTO users (email, password_hash, role, created_at) VALUES (?,?,?,?)",
@@ -238,7 +245,7 @@ def init_db():
         conn.commit()
     conn.close()
 
-# init once (works under Gunicorn)
+# init once (works under Gunicorn too)
 try:
     init_db()
 except Exception as e:
@@ -247,7 +254,8 @@ except Exception as e:
 # ========= Auth =========
 def current_user() -> Optional[sqlite3.Row]:
     uid = session.get("user_id")
-    if not uid: return None
+    if not uid:
+        return None
     conn = get_db()
     row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     conn.close()
@@ -267,7 +275,7 @@ def login_required(f):
 def index():
     if current_user():
         return redirect(url_for("dashboard"))
-    return render_template_string(HOME_HTML, app_name=APP_NAME, user=None, title="Home")
+    return render_template_string(HOME_HTML, app_name=APP_NAME, user=None, title="Home", active=None)
 
 @app.route("/login", methods=["GET","POST"])
 def login():
@@ -281,7 +289,7 @@ def login():
             session["user_id"] = row["id"]
             return redirect(url_for("dashboard"))
         flash("Invalid credentials", "warning")
-    return render_template_string(LOGIN_HTML, app_name=APP_NAME, user=None, title="Login")
+    return render_template_string(LOGIN_HTML, app_name=APP_NAME, user=None, title="Login", active=None)
 
 @app.route("/dashboard")
 @login_required
@@ -296,7 +304,7 @@ def dashboard():
     return render_template_string(DASHBOARD_HTML, app_name=APP_NAME, user=current_user(), title="Dashboard",
                                   active="dashboard", totals=totals)
 
-# ---- Properties ----
+# ---- Properties CRUD ----
 @app.route("/properties")
 @login_required
 def properties():
@@ -306,9 +314,11 @@ def properties():
     params = []
     if q:
         sql += " AND (name LIKE ? OR address LIKE ?)"
-        like = f"%{q}%"; params += [like, like]
+        like = f"%{q}%"
+        params += [like, like]
     if status:
-        sql += " AND status=?"; params.append(status)
+        sql += " AND status=?"
+        params.append(status)
     sql += " ORDER BY created_at DESC"
     conn = get_db()
     rows = conn.execute(sql, params).fetchall()
@@ -326,7 +336,8 @@ def new_property():
             (request.form["name"], request.form.get("address"), request.form.get("status","vacant"),
              datetime.utcnow().isoformat())
         )
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
         flash("Property added.", "success")
         return redirect(url_for("properties"))
     return render_template_string(PROPERTY_FORM_HTML, app_name=APP_NAME, user=current_user(),
@@ -338,14 +349,16 @@ def edit_property(pid):
     conn = get_db()
     p = conn.execute("SELECT * FROM properties WHERE id=?", (pid,)).fetchone()
     if not p:
-        conn.close(); flash("Property not found.", "warning")
+        conn.close()
+        flash("Property not found.", "warning")
         return redirect(url_for("properties"))
     if request.method == "POST":
         conn.execute(
             "UPDATE properties SET name=?, address=?, status=? WHERE id=?",
             (request.form["name"], request.form.get("address"), request.form.get("status","vacant"), pid)
         )
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
         flash("Property updated.", "success")
         return redirect(url_for("properties"))
     conn.close()
@@ -357,18 +370,19 @@ def edit_property(pid):
 def delete_property(pid):
     conn = get_db()
     conn.execute("DELETE FROM properties WHERE id=?", (pid,))
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
     flash("Property deleted.", "info")
     return redirect(url_for("properties"))
 
-# ========= Context =========
+# ========= Context (to provide 'user' & 'active') =========
 @app.context_processor
 def inject_base():
     return {"app_name": APP_NAME, "user": current_user(), "active": request.endpoint}
 
 # ========= Entry =========
 if __name__ == "__main__":
-    # already initialized once above; calling again is safe
+    # Safe to call init_db again
     init_db()
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
