@@ -1,8 +1,8 @@
-
 """
 Improved Property & Contracts Manager — Single-file Flask App (Deploy-Ready)
 Minimal working version for Render (uses SQLite, simple HTML).
 """
+
 from __future__ import annotations
 import os, sqlite3
 from datetime import datetime
@@ -18,6 +18,7 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 app = Flask(__name__)
 app.config.update(SECRET_KEY=SECRET_KEY)
 
+# ---------------------- DB Helpers ----------------------
 def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -26,6 +27,7 @@ def get_db():
 def init_db():
     conn = get_db()
     c = conn.cursor()
+    # users
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,6 +37,7 @@ def init_db():
             created_at TEXT NOT NULL
         )
     """)
+    # properties
     c.execute("""
         CREATE TABLE IF NOT EXISTS properties (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,17 +48,21 @@ def init_db():
         )
     """)
     conn.commit()
-    # default admin
+    # create default admin
     cur = c.execute("SELECT COUNT(*) AS n FROM users")
     if cur.fetchone()["n"] == 0:
-        c.execute("INSERT INTO users (email, password_hash, role, created_at) VALUES (?,?,?,?)",
-                  ("admin@example.com", generate_password_hash("admin123"), "admin", datetime.utcnow().isoformat()))
+        c.execute(
+            "INSERT INTO users (email, password_hash, role, created_at) VALUES (?,?,?,?)",
+            ("admin@example.com", generate_password_hash("admin123"), "admin", datetime.utcnow().isoformat())
+        )
         conn.commit()
     conn.close()
 
+# ---------------------- Auth ----------------------
 def current_user() -> Optional[sqlite3.Row]:
     uid = session.get("user_id")
-    if not uid: return None
+    if not uid:
+        return None
     conn = get_db()
     row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     conn.close()
@@ -70,10 +77,12 @@ def login_required(f):
         return f(*args, **kwargs)
     return wrapper
 
+# ---------------------- Routes ----------------------
 @app.route("/")
 def index():
     user = current_user()
-    if user: return redirect(url_for("dashboard"))
+    if user:
+        return redirect(url_for("dashboard"))
     return "<h1>Welcome to Property Manager</h1><p><a href='/login'>Login</a></p>"
 
 @app.route("/login", methods=["GET","POST"])
@@ -103,7 +112,11 @@ def dashboard():
     conn = get_db()
     count_props = conn.execute("SELECT COUNT(*) AS c FROM properties").fetchone()["c"]
     conn.close()
-    return f"<h1>Dashboard</h1><p>Total properties: {count_props}</p><p><a href='/logout'>Logout</a></p>"
+    return (
+        f"<h1>Dashboard</h1>"
+        f"<p>Total properties: {count_props}</p>"
+        f"<p><a href='/logout'>Logout</a></p>"
+    )
 
 @app.route("/logout")
 @login_required
@@ -115,8 +128,9 @@ def logout():
 def setup():
     init_db()
 
-if __name__ == '__main__':
+# ---------------------- Entry ----------------------
+if __name__ == "__main__":
     init_db()
-    import os
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
+
